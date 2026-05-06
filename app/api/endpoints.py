@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.models import TravelProject, Place
@@ -10,8 +10,15 @@ from app.services import validate_artwork
 router = APIRouter()
 
 @router.get("/projects", response_model=List[TravelProject])
-async def get_projects(session: Session = Depends(get_session)):
-    return session.exec(select(TravelProject)).all()
+async def get_projects(
+        session: Session = Depends(get_session),
+        offset: int = Query(default=0, ge=0, description="How many records to skip"),
+        limit: int = Query(default=10, le=100, description="How many projects to restore (max 100)")
+):
+    projects = session.exec(
+        select(TravelProject).offset(offset).limit(limit)
+    ).all()
+    return projects
 
 @router.post("/projects", response_model=TravelProject)
 async def create_project(data: ProjectCreate, session: Session = Depends(get_session)):
@@ -57,11 +64,16 @@ async def add_place_to_project(
     session.refresh(place)
     return place
 
-@router.patch("/places/{place_id}", response_model=Place)
-async def update_place(place_id: int, data: PlaceUpdate, session: Session = Depends(get_session)):
+@router.patch("/projects/{project_id}/places/{place_id}", response_model=Place)
+async def update_place(
+        project_id: int,
+        place_id: int,
+        data: PlaceUpdate,
+        session: Session = Depends(get_session),
+):
     place = session.get(Place, place_id)
 
-    if not place:
+    if not place or place.project_id != project_id:
         raise HTTPException(status_code=404, detail="Place not found")
 
     if data.notes is not None:
@@ -69,8 +81,16 @@ async def update_place(place_id: int, data: PlaceUpdate, session: Session = Depe
     if data.is_visited is not None:
         place.is_visited = data.is_visited
 
+    session.add(place)
     session.commit()
     session.refresh(place)
+
+    project = session.get(TravelProject, project_id)
+    if project.places and all(p.is_visited for p in project.places):
+        project.is_completed = True
+        session.add(project)
+        session.commit()
+
     return place
 
 @router.delete("/projects/{project_id}")

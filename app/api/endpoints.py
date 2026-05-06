@@ -101,7 +101,6 @@ async def update_place(
 
     project = session.get(TravelProject, project_id)
     if project.places and all(p.is_visited for p in project.places):
-        project.is_completed = True
         session.add(project)
         session.commit()
 
